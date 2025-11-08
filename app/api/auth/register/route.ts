@@ -1,65 +1,47 @@
-import { cookies } from "next/headers"
-import { NextResponse } from "next/server"
-import bcrypt from 'bcryptjs'
-import prisma from '@/lib/prisma'
+import { NextRequest, NextResponse } from 'next/server';
+import bcrypt from 'bcryptjs';
+import { createUser, getUserByEmail } from '@/lib/neon';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    console.log('Registration attempt starting...')
-    const { email, password, name } = await request.json()
-    console.log('Received registration data:', { email, name }) // Don't log passwords
+    const { email, password, name } = await request.json();
 
-    // Validation
-    if (!email || !password || !name) {
-      return NextResponse.json({ message: "Missing required fields" }, { status: 400 })
-    }
-
-    if (password.length < 6) {
-      return NextResponse.json({ message: "Password must be at least 6 characters" }, { status: 400 })
+    // Validate input
+    if (!email || !password) {
+      return NextResponse.json(
+        { error: 'Email and password are required' },
+        { status: 400 }
+      );
     }
 
     // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email }
-    })
-
+    const existingUser = await getUserByEmail(email);
     if (existingUser) {
-      return NextResponse.json({ message: "Email already registered" }, { status: 400 })
+      return NextResponse.json(
+        { error: 'User already exists' },
+        { status: 400 }
+      );
     }
 
     // Hash password
-    const salt = await bcrypt.genSalt(10)
-    const hashedPassword = await bcrypt.hash(password, salt)
-
-    // Check if this is the first user (admin)
-    const userCount = await prisma.user.count()
-    const isAdmin = userCount === 0
+    const hashedPassword = await bcrypt.hash(password, 12);
 
     // Create user
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        name,
-        isAdmin
-      }
-    })
+    const user = await createUser(email, hashedPassword, name);
 
-    // Set auth cookie
-    const cookieStore = await cookies()
-    cookieStore.set("auth_token", `token_${user.id}_${Date.now()}`, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-    })
+    // Return user without password
+    const { password: _, ...userWithoutPassword } = user;
 
-    return NextResponse.json({ 
-      message: "Registration successful", 
-      isAdmin: user.isAdmin 
-    }, { status: 201 })
+    return NextResponse.json(
+      { message: 'User created successfully', user: userWithoutPassword },
+      { status: 201 }
+    );
+
   } catch (error) {
-    console.error('Registration error:', error)
-    return NextResponse.json({ message: "Registration failed" }, { status: 500 })
+    console.error('Registration error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }

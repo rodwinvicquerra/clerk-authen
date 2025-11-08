@@ -1,34 +1,43 @@
-import { cookies } from "next/headers"
-import { NextResponse } from "next/server"
-import prisma from '@/lib/prisma'
+import { NextRequest, NextResponse } from 'next/server';
+import jwt from 'jsonwebtoken';
+import { getUserByEmail } from '@/lib/neon';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const cookieStore = await cookies()
-    const authToken = cookieStore.get("auth_token")
+    const token = request.headers.get('authorization')?.replace('Bearer ', '');
 
-    if (!authToken) {
-      return NextResponse.json({ authenticated: false }, { status: 401 })
+    if (!token) {
+      return NextResponse.json(
+        { error: 'No token provided' },
+        { status: 401 }
+      );
     }
 
-    // Extract user ID from token (format: token_userId_timestamp)
-    const userId = authToken.value.split('_')[1]
+    // Verify JWT token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret') as any;
 
-    // Verify user exists
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
-    })
-
+    // Get user details
+    const user = await getUserByEmail(decoded.email);
     if (!user) {
-      return NextResponse.json({ authenticated: false }, { status: 401 })
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
     }
 
-    return NextResponse.json({ 
-      authenticated: true,
-      isAdmin: user.isAdmin 
-    }, { status: 200 })
+    // Return user without password
+    const { password: _, ...userWithoutPassword } = user;
+
+    return NextResponse.json({
+      user: userWithoutPassword,
+      authenticated: true
+    });
+
   } catch (error) {
-    console.error('Auth check error:', error)
-    return NextResponse.json({ authenticated: false }, { status: 401 })
+    console.error('Auth check error:', error);
+    return NextResponse.json(
+      { error: 'Invalid token' },
+      { status: 401 }
+    );
   }
 }

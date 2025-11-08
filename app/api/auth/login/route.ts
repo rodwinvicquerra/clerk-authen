@@ -1,46 +1,59 @@
-import { cookies } from "next/headers"
-import { NextResponse } from "next/server"
-import bcrypt from 'bcryptjs'
-import prisma from '@/lib/prisma'
+import { NextRequest, NextResponse } from 'next/server';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { getUserByEmail } from '@/lib/neon';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const { email, password } = await request.json()
+    const { email, password } = await request.json();
 
+    // Validate input
     if (!email || !password) {
-      return NextResponse.json({ message: "Missing email or password" }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Email and password are required' },
+        { status: 400 }
+      );
     }
 
-    // Find user by email
-    const user = await prisma.user.findUnique({
-      where: { email }
-    })
-
+    // Get user
+    const user = await getUserByEmail(email);
     if (!user) {
-      return NextResponse.json({ message: "Invalid email or password" }, { status: 401 })
+      return NextResponse.json(
+        { error: 'Invalid credentials' },
+        { status: 401 }
+      );
     }
 
-    // Verify password
-    const isValidPassword = await bcrypt.compare(password, user.password)
+    // Check password
+    const isValidPassword = await bcrypt.compare(password, user.password);
     if (!isValidPassword) {
-      return NextResponse.json({ message: "Invalid email or password" }, { status: 401 })
+      return NextResponse.json(
+        { error: 'Invalid credentials' },
+        { status: 401 }
+      );
     }
 
-    // Set auth cookie
-    const cookieStore = await cookies()
-    cookieStore.set("auth_token", `token_${user.id}_${Date.now()}`, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-    })
+    // Create JWT token
+    const token = jwt.sign(
+      { userId: user.id, email: user.email },
+      process.env.JWT_SECRET || 'fallback-secret',
+      { expiresIn: '7d' }
+    );
 
-    return NextResponse.json({ 
-      message: "Login successful",
-      isAdmin: user.isAdmin
-    }, { status: 200 })
+    // Return user without password
+    const { password: _, ...userWithoutPassword } = user;
+
+    return NextResponse.json({
+      message: 'Login successful',
+      user: userWithoutPassword,
+      token
+    });
+
   } catch (error) {
-    console.error('Login error:', error)
-    return NextResponse.json({ message: "Login failed" }, { status: 500 })
+    console.error('Login error:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
